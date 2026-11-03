@@ -1,0 +1,56 @@
+import streamlit as st
+import pandas as pd
+from loader import lade_alle_sheets, finde_sheet, vereinheitliche_spalten
+from tarife import bereinige_kond_sheet
+from pruefung import pruefe_rechnung
+from report import erzeuge_report
+
+st.set_page_config(page_title="DACHSER Frachtrechnungsprüfung", layout="wide")
+st.title("📦 Automatisierte Frachtrechnungsprüfung – JTJ Sonneborn / Velux")
+
+datei = st.file_uploader("Monatliche DACHSER-Rechnungsdatei hochladen (.xls/.xlsx)", type=["xls", "xlsx"])
+
+if datei:
+    try:
+        sheets = lade_alle_sheets(datei)
+    except RuntimeError as e:
+        st.error(str(e))
+        st.stop()
+
+    pruefung_df = vereinheitliche_spalten(finde_sheet(sheets, "pruefung"))
+
+    matrizen = {}
+    for key, name in [
+        ("Kond_BE", "kond_be"),
+        ("Kond_BE_Targoflex", "kond_be_targoflex"),
+        ("Kond_Targospeed10", "kond_targospeed10"),
+        ("Kond_Targospeed", "kond_targospeed"),
+    ]:
+        rohdaten = finde_sheet(sheets, name)
+        matrizen[key] = bereinige_kond_sheet(rohdaten)
+
+    with st.spinner("Prüfe Sendungen gegen Tarifkonditionen..."):
+        ergebnisse = pruefe_rechnung(pruefung_df, matrizen)
+
+    abweichungen = ergebnisse[ergebnisse["Status"] == "Abweichung"]
+    sonderfaelle = ergebnisse[ergebnisse["Status"].isin(["Sonderfall", "Nicht prüfbar"])]
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Geprüfte Positionen", len(ergebnisse))
+    col2.metric("Abweichungen", len(abweichungen))
+    col3.metric("Summe Differenzen", f"{abweichungen['Differenz'].sum():,.2f} €")
+    col4.metric("Sonderfälle (manuell prüfen)", len(sonderfaelle))
+
+    st.subheader("⚠️ Abweichende Positionen")
+    st.dataframe(abweichungen, use_container_width=True)
+
+    st.subheader("🔎 Sonderfälle / nicht automatisch prüfbar")
+    st.dataframe(sonderfaelle, use_container_width=True)
+
+    excel_datei = erzeuge_report(ergebnisse)
+    st.download_button(
+        "📥 Vollständigen Prüfbericht herunterladen",
+        data=excel_datei,
+        file_name="pruefbericht.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
