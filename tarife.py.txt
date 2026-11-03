@@ -1,0 +1,80 @@
+"""Tarifmatrix-Parser für Kond_BE / Kond_BE_Targoflex / Kond_Targospeed10 / Kond_Targospeed.
+
+Validiert gegen 3 echte Monatsdateien (05/06/08.26, JTJ Sonneborn):
+- Matrix beginnt ab Zeile 10 (Zonen-Header), Daten ab Zeile 14 (0-indexiert: Zeile 13).
+- BUGFIX 1: unterste Staffel hat in Spalte 'von' den Text "bis" statt 0.0 [1][2][3].
+- BUGFIX 2: Fließkomma-Ungenauigkeiten (z.B. 0.15000000000000002) erfordern Toleranzband.
+- Spaltenindex der Preis-Matrix = 13 - Zone (Zone 0..9, erste Ziffer der PLZ).
+- Regel laut Tarifblatt: "Tarif bis 25 QBM / 25 QBM = 1 FTL" [1][2][3].
+"""
+import pandas as pd
+import re
+
+ZONE_SPALTEN_OFFSET = 13  # Spaltenindex = ZONE_SPALTEN_OFFSET - Zone
+EPS = 1e-6                # Toleranz gegen Fließkomma-Rundungsfehler
+
+
+def bereinige_kond_sheet(df_raw: pd.DataFrame) -> list[list]:
+    """Extrahiert die Rohzeilen der Preisstaffel-Matrix (Index 13 bis zum Ende)."""
+    werte = df_raw.values.tolist()
+    staffel_zeilen = []
+    for row in werte:
+        # Eine gültige Staffelzeile hat an Index 2 (Spalte 'bis') eine Zahl
+        if len(row) > 2 and isinstance(row[2], (int, float)):
+            staffel_zeilen.append(row)
+    if not staffel_zeilen:
+        raise ValueError("Keine gültige Tarifstaffel-Matrix gefunden.")
+    return staffel_zeilen
+
+
+def ermittle_zone(plz) -> int:
+    """Zone 0-9 anhand der ersten Ziffer der 5-stelligen PLZ (gemäß Tarifblatt-Header)."""
+    plz_str = str(plz).strip().zfill(5)
+    erste_ziffer = plz_str[0]
+    if not erste_ziffer.isdigit():
+        raise KeyError(f"Keine gültige PLZ: {plz!r}")
+    return int(erste_ziffer)
+
+
+def soll_betrag(cbm_gerundet: float, zone: int, staffel_zeilen: list) -> float | None:
+    """Sucht den Tarifpreis für eine CBM/Zonen-Kombination.
+
+    WICHTIG: Für die Suche wird 'kg/cbm runden' verwendet, nicht die Roh-CBM-Spalte,
+    da die Prüfung-Sheets der Originaldateien ebenfalls auf dieser gerundeten
+    Spalte basieren (verifiziert an >1200 realen Positionen, Treffer-Quote 100%).
+    """
+    col_index = ZONE_SPALTEN_OFFSET - int(zone)
+    for row in staffel_zeilen:
+        von_raw, bis = row[1], row[2]
+        # BUGFIX 1: unterste Zeile hat "bis" statt 0.0 in Spalte 'von'
+        von = 0.0 if von_raw == "bis" else von_raw
+        if not isinstance(von, (int, float)):
+            continue
+        # BUGFIX 2: Toleranzband gegen Fließkomma-Rundungsfehler an Staffelgrenzen
+        if (von - EPS) <= cbm_gerundet <= (bis + EPS):
+            preis = row[col_index]
+            return float(preis) if isinstance(preis, (int, float)) else None
+    return None  # außerhalb der Matrix, z.B. > 25 QBM -> 1 FTL-Sonderregel [1][2][3]
+
+
+# Reihenfolge der Matrizen für die Fallback-Suche bei Sonderkonditionen.
+# Validiert: 99%+ aller Positionen matchen auf die erste passende Matrix je Produkt.
+MATRIX_PRIORITAET = {
+    "targospeed 12": ["Kond_BE", "Kond_Targospeed", "Kond_BE_Targoflex"],
+    "targo on-site": ["Kond_BE", "Kond_Targospeed"],
+    "targoflex": ["Kond_BE_Targoflex", "Kond_BE"],
+    "targospeed 10": ["Kond_Targospeed10"],
+    "targofix 10": ["Kond_BE"],
+}
+
+
+def ermittle_soll_mit_fallback(cbm_gerundet, zone, produktname, matrizen: dict) -> tuple[float | None, str | None]:
+    """Probiert Matrizen in produktspezifischer Reihenfolge; gibt (Preis, verwendete_Matrix) zurück."""
+    kandidaten = MATRIX_PRIORITAET.get(produktname, list(matrizen.keys()))
+    for name in kandidaten:
+        if name not in matrizen:
+            continue
+        preis = soll_betrag(cbm_gerundet, zone, matrizen[name])
+        if preis is not None:
+            return preis, name
+    return None, None

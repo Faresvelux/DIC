@@ -1,0 +1,11 @@
+import io
+import pandas as pd
+
+
+def erzeuge_report(ergebnisse: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        ergebnisse.to_excel(writer, index=False, sheet_name="Prüfbericht")
+        abweichungen = ergebnisse[ergebnisse["Status"] == "Abweichung"]
+        abweichungen.to_excel(writer, index=False, sheet_name="Nur Abweichungen")
+    return buffer.getvalue()
