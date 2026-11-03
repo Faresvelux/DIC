@@ -1,12 +1,11 @@
 """Robustes Einlesen der DACHSER-Frachtrechnungsdateien (.xls/.xlsx, DE/EN)."""
 import pandas as pd
 
-# Spalten-Mapping: Deutsch <-> Englisch, da DACHSER beide Varianten exportiert
 SPALTEN_MAPPING = {
     "Rechnungsnummer": ["Rechnungsnummer", "Invoice number"],
     "Rechnungsdatum": ["Rechnungsdatum", "Invoice date"],
     "Rechnungssumme": ["Rechnungssumme", "Invoice amount"],
-    "Währung": ["Währung", "Currency"],
+    "Wahrung": ["Wahrung", "Currency"],
     "Rechnungsposition": ["Rechnungsposition", "Invoice position"],
     "Erstauftragsnummer": ["Erstauftragsnummer", "First order number"],
     "Leistungsart": ["Leistungsart", "Service type"],
@@ -21,17 +20,17 @@ SPALTEN_MAPPING = {
     "Produkt": ["Produkt"],
     "Produktname": ["Produktname"],
     "PLZ": ["PLZ"],
-    "Prüfung": ["Prüfung"],
+    "Prufung": ["Prufung"],
     "Kommentare": ["Kommentare"],
-    "Empfänger PLZ": ["Empfänger PLZ", "Post code recipient", "Recipient post code"],
+    "Empfanger PLZ": ["Empfanger PLZ", "Post code recipient", "Recipient post code"],
 }
 
 SHEET_ALIASE = {
-    "uebersicht": ["Übersicht", "Summary"],
+    "uebersicht": ["Ubersicht", "Summary"],
     "sendungssummen": ["Sendungssummen", "Shipment-summary"],
     "sendungsdetails": ["Sendungsdetails", "Shipment-Details"],
     "auftragsdetails": ["Auftragsdetails", "Order-details"],
-    "pruefung": ["Prüfung"],  # bleibt in beiden Sprachversionen deutsch
+    "pruefung": ["Prufung"],
     "kond_be": ["Kond_BE"],
     "kond_be_targoflex": ["Kond_BE_Targoflex"],
     "kond_targospeed10": ["Kond_Targospeed10"],
@@ -39,37 +38,35 @@ SHEET_ALIASE = {
 }
 
 
-def engine_fuer_datei(dateiname: str) -> str:
-    """xlrd (>=2.x) kann NUR noch .xls lesen, openpyxl NUR .xlsx."""
+def engine_fuer_datei(dateiname):
     name = dateiname.lower()
     if name.endswith(".xls"):
         return "xlrd"
     if name.endswith(".xlsx"):
         return "openpyxl"
-    raise ValueError("Nicht unterstütztes Format. Bitte .xls oder .xlsx hochladen.")
+    raise ValueError("Nicht unterstuetztes Format. Bitte .xls oder .xlsx hochladen.")
 
 
-def lade_alle_sheets(datei) -> dict:
+def lade_alle_sheets(datei):
     engine = engine_fuer_datei(datei.name)
     try:
         xls = pd.ExcelFile(datei, engine=engine)
     except Exception as e:
         raise RuntimeError(
-            f"Datei konnte nicht gelesen werden ({e}). "
-            "Bitte prüfen, ob es eine gültige DACHSER-Exportdatei ist."
+            "Datei konnte nicht gelesen werden (" + str(e) + "). "
+            "Bitte pruefen, ob es eine gueltige DACHSER-Exportdatei ist."
         )
     return {name: xls.parse(name, header=0) for name in xls.sheet_names}
 
 
-def finde_sheet(sheets: dict, schluessel: str) -> pd.DataFrame:
+def finde_sheet(sheets, schluessel):
     for kandidat in SHEET_ALIASE.get(schluessel, [schluessel]):
         if kandidat in sheets:
             return sheets[kandidat]
-    raise KeyError(f"Sheet für '{schluessel}' nicht gefunden. Vorhanden: {list(sheets.keys())}")
+    raise KeyError("Sheet fuer '" + schluessel + "' nicht gefunden. Vorhanden: " + str(list(sheets.keys())))
 
 
-def vereinheitliche_spalten(df: pd.DataFrame) -> pd.DataFrame:
-    """Benennt DE/EN-Spalten auf einen einheitlichen deutschen Standard um."""
+def vereinheitliche_spalten(df):
     umbenennung = {}
     for standard, varianten in SPALTEN_MAPPING.items():
         for v in varianten:
@@ -77,4 +74,3 @@ def vereinheitliche_spalten(df: pd.DataFrame) -> pd.DataFrame:
                 umbenennung[v] = standard
                 break
     return df.rename(columns=umbenennung)
-    )
